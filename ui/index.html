@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>webinarip</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<main id="app" class="idle">
+  <header class="top">
+    <div class="brand">webinarip</div>
+    <form id="form" class="link" autocomplete="off">
+      <input id="link" type="text" spellcheck="false" autofocus
+             placeholder="Вставьте ссылку на запись и нажмите Enter" aria-label="Ссылка на запись">
+      <button type="submit" class="go" aria-label="Начать">↵</button>
+    </form>
+    <p id="probe" class="probe" aria-live="polite"></p>
+    <div class="modes" role="radiogroup" aria-label="Что скачать">
+      <label><input type="radio" name="what" value="audio" checked> аудио</label>
+      <label class="soon" title="в следующей версии"><input type="radio" name="what" value="video" disabled> видео</label>
+      <label class="soon" title="в следующей версии"><input type="radio" name="what" value="both" disabled> оба</label>
+      <button type="button" id="more" class="more" aria-expanded="false" aria-controls="params">Параметры</button>
+    </div>
+  </header>
+
+  <section id="params" class="params" hidden>
+    <div class="row">
+      <span class="k">Формат</span>
+      <div class="seg" data-name="format">
+        <button type="button" value="mp3" class="on">MP3</button><button type="button" value="opus">Opus</button><button
+        type="button" value="aac">AAC</button><button type="button" value="wav">WAV</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="k">Качество</span>
+      <div class="seg" data-name="quality">
+        <button type="button" value="high" class="on">обычное</button><button type="button" value="low">речь · 16 кГц моно</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="k">Отрезок</span>
+      <input id="from" class="time" placeholder="с 0:00"> <span class="dash">—</span> <input id="to" class="time" placeholder="по конец">
+    </div>
+    <div class="row">
+      <span class="k">Дорожки</span>
+      <div id="tracks" class="chips"><span class="hint">появятся после вставки ссылки</span></div>
+    </div>
+    <div class="row">
+      <span class="k">Доступ</span>
+      <input id="session" class="session" type="password" placeholder="session-id для закрытой записи — не сохраняется">
+    </div>
+  </section>
+
+  <section id="live" class="live" hidden>
+    <div class="head">
+      <div class="title"><b id="title"></b> <span id="meta" class="muted"></span></div>
+      <span id="queue" class="muted"></span>
+      <button type="button" id="cancel" class="ghost">Отменить</button>
+    </div>
+    <div class="hero">
+      <div><b id="speed">—</b><span>скорость</span></div>
+      <div><b id="eta">—</b><span>осталось</span></div>
+      <div><b id="pct">0%</b><span>готово</span></div>
+    </div>
+    <ol id="steps" class="steps">
+      <li data-s="meta">метаданные</li><li data-s="download">загрузка</li><li data-s="mix">сведение</li><li data-s="done">готово</li>
+    </ol>
+    <div class="bar"><i id="bar"></i></div>
+    <div id="lanes" class="lanes"></div>
+    <div class="foot">
+      <audio id="player" controls preload="none" hidden></audio>
+      <div id="done" class="done" hidden></div>
+      <div class="lat"><svg id="hist" viewBox="0 0 96 24" preserveAspectRatio="none" aria-hidden="true"></svg><span id="pp" class="muted"></span></div>
+    </div>
+    <p id="error" class="error" hidden></p>
+  </section>
+
+  <section id="history" class="history"></section>
+</main>
+</body>
+</html>

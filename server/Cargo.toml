@@ -1,0 +1,20 @@
+[package]
+name = "webinarip-server"
+description = "Local web interface for webinarip: embedded UI, job queue, live progress"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum = "0.8.9"
+chrono = "0.4.45"
+dirs = "7.0.0"
+futures-util = "0.3.34"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "net"] }
+tower-http = { version = "0.7.1", features = ["fs"] }
+webinarip-core = { version = "0.1.0", path = "../core" }

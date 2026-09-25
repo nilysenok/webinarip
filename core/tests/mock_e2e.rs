@@ -44,12 +44,12 @@ async fn downloads_under_pressure_mixes_and_then_uses_the_cache() {
     .await;
     let dir = temp("e2e");
     let prog = Arc::new(Progress::default());
-    let out = job::run(options(&mock, &dir, 4), prog.clone()).await.unwrap();
+    let out = job::run(options(&mock, &dir, 4), prog.clone(), |_| {}).await.unwrap();
 
     // 429s were honoured and the flaky segment was retried.
     assert_eq!(mock.stats.sent_429.load(SeqCst), 3);
-    assert_eq!(prog.http429.load(Relaxed), 3);
-    assert!(prog.retries.load(Relaxed) >= 4);
+    assert_eq!(out.download.http429.load(Relaxed), 3);
+    assert!(out.download.retries.load(Relaxed) >= 4);
     // Never more parallel connections than asked for (plus the metadata/playlist requests).
     assert!(
         mock.stats.conns_max.load(SeqCst) <= 4 + 2,
@@ -75,9 +75,9 @@ async fn downloads_under_pressure_mixes_and_then_uses_the_cache() {
     let mut again = options(&mock, &dir, 4);
     again.format = Format::Opus;
     let prog2 = Arc::new(Progress::default());
-    job::run(again, prog2.clone()).await.unwrap();
+    let out2 = job::run(again, prog2.clone(), |_| {}).await.unwrap();
     assert_eq!(mock.stats.segment_hits.load(SeqCst), hits);
-    assert_eq!(prog2.seg_cached.load(Relaxed), prog2.seg_total.load(Relaxed));
+    assert_eq!(out2.download.seg_cached.load(Relaxed), out2.download.seg_total.load(Relaxed));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -95,7 +95,7 @@ async fn range_and_track_selection() {
     o.to = Some(4.0);
     o.tracks = Some("host".into());
     o.quality = Quality::Low;
-    let out = job::run(o, Arc::new(Progress::default())).await.unwrap();
+    let out = job::run(o, Arc::new(Progress::default()), |_| {}).await.unwrap();
     let mut wav = hound::WavReader::open(&out.path).unwrap();
     assert_eq!((wav.spec().sample_rate, wav.spec().channels), (16_000, 1));
     let pcm: Vec<i16> = wav.samples::<i16>().map(Result::unwrap).collect();
@@ -114,7 +114,7 @@ async fn private_recording_asks_for_a_session_id() {
     })
     .await;
     let dir = temp("private");
-    let err = job::run(options(&mock, &dir, 4), Arc::new(Progress::default()))
+    let err = job::run(options(&mock, &dir, 4), Arc::new(Progress::default()), |_| {})
         .await
         .err()
         .unwrap();

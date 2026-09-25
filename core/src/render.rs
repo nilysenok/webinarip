@@ -4,17 +4,18 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
 use crate::decode::{Gate, RATE, TrackDecoder};
 use crate::dsp::Downsampler;
 use crate::encode::{self, Format, Quality};
-use crate::job::Planned;
 use crate::mix::{ChunkSource, Input, mix};
+use crate::plan::Planned;
 use crate::progress::Progress;
 use crate::{Error, Result};
 
-pub(crate) struct Render {
+/// What to render: planned tracks already cut to the range, and the output format.
+pub struct Render {
     pub planned: Vec<Planned>,
     pub from: f64,
     pub to: f64,
@@ -53,7 +54,8 @@ impl ChunkSource for Decoded {
 }
 
 impl Render {
-    pub fn write_file(self, path: &Path, title: &str, prog: &Progress, gate: Arc<Gate>) -> Result<()> {
+    /// Blocks until the file is written. `cancel` stops it early with an error.
+    pub fn write_file(self, path: &Path, title: &str, prog: &Progress, gate: Arc<Gate>, cancel: Arc<AtomicBool>) -> Result<()> {
         let Render {
             planned,
             from,
@@ -68,21 +70,29 @@ impl Render {
                 let gate = gate.clone();
                 Input {
                     offset: frame(p.track.start),
-                    starts_at: frame(p.first) - RATE as i64, // 1 s margin for rounded EXTINF
+                    starts_at: frame(p.first()) - RATE as i64, // 1 s margin for rounded EXTINF
                     open: Box::new(move || {
                         Ok(Box::new(Decoded {
-                            dec: TrackDecoder::open(p.files, gate)?,
+                            dec: TrackDecoder::open(p.files(), gate)?,
                             carry: None,
                         }) as Box<dyn ChunkSource>)
                     }),
                 }
             })
             .collect();
-        encode_mix(inputs, to - from, format, quality, path, title, prog)
+        encode_mix(inputs, to - from, (format, quality), path, title, prog, &cancel)
     }
 }
 
-fn encode_mix(inputs: Vec<Input>, seconds: f64, format: Format, quality: Quality, path: &Path, title: &str, prog: &Progress) -> Result<()> {
+fn encode_mix(
+    inputs: Vec<Input>,
+    seconds: f64,
+    (format, quality): (Format, Quality),
+    path: &Path,
+    title: &str,
+    prog: &Progress,
+    cancel: &AtomicBool,
+) -> Result<()> {
     let mut enc = encode::create(format, format.spec(quality), path, title)?;
     // The encoder runs on its own thread: mixing and encoding overlap instead of adding up.
     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(4);
@@ -94,7 +104,12 @@ fn encode_mix(inputs: Vec<Input>, seconds: f64, format: Format, quality: Quality
     });
     let mut down = (quality == Quality::Low).then(Downsampler::default);
     let total = (seconds * RATE as f64).round() as u64;
-    let send = |v: Vec<f32>| tx.send(v).map_err(|_| Error::Encode("encoder stopped".into()));
+    let send = |v: Vec<f32>| {
+        if cancel.load(Relaxed) {
+            return Err(Error::Usage("cancelled".into()));
+        }
+        tx.send(v).map_err(|_| Error::Encode("encoder stopped".into()))
+    };
     let mixed = mix(
         inputs,
         total,

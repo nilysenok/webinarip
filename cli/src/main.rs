@@ -2,6 +2,7 @@
 //! Only for recordings you have the rights to.
 
 mod bars;
+mod serve;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -135,18 +136,30 @@ async fn run(cli: Cli) -> Result<(), Error> {
     if cli.list {
         return list(&opts).await;
     }
-    let prog = Arc::new(Progress::default());
+    let (prog, download) = (Arc::new(Progress::default()), Arc::new(std::sync::OnceLock::new()));
     let t0 = Instant::now();
-    let drawer = tokio::spawn(bars::draw(prog.clone()));
-    let result = job::run(opts, prog.clone()).await;
+    let drawer = tokio::spawn(bars::draw(prog.clone(), download.clone()));
+    let result = job::run(opts, prog, |d| {
+        let _ = download.set(d);
+    })
+    .await;
     drawer.abort();
     let out = result?;
-    bars::summary(&out, &prog, t0.elapsed());
+    bars::summary(&out, t0.elapsed());
     Ok(())
 }
 
 #[tokio::main]
 async fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("serve") {
+        let rest = std::iter::once(args[0].clone()).chain(args[2..].iter().cloned()).collect();
+        if let Err(e) = serve::run(rest).await {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let cli = Cli::parse();
     if let Err(e) = run(cli).await {
         eprintln!("error: {e}");

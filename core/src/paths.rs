@@ -6,7 +6,7 @@ use crate::job::Options;
 use crate::record::Record;
 use crate::{Error, Result, timefmt};
 
-pub(crate) fn window(opts: &Options, rec: &Record) -> Result<(f64, f64)> {
+pub fn window(opts: &Options, rec: &Record) -> Result<(f64, f64)> {
     let from = opts.from.unwrap_or(0.0).max(0.0);
     let to = opts.to.unwrap_or(rec.duration).min(rec.duration);
     if to <= from {
@@ -30,7 +30,7 @@ pub fn sanitize(name: &str) -> String {
 }
 
 /// `<out>/YYYY-MM-DD_HHMM <title>/<title>[ range].<ext>` — a new folder for every run.
-pub(crate) fn output_path(out_dir: &Path, rec: &Record, range: Option<(f64, f64)>, ext: &str) -> Result<PathBuf> {
+pub fn output_path(out_dir: &Path, rec: &Record, range: Option<(f64, f64)>, ext: &str) -> Result<PathBuf> {
     let base = format!("{} {}", chrono::Local::now().format("%Y-%m-%d_%H%M"), sanitize(&rec.title));
     let mut dir = out_dir.join(&base);
     for n in 2.. {

@@ -47,7 +47,7 @@ export function live(job, queued) {
   const running = job.status === "running";
   $("cancel").hidden = !running;
   const [a, aLabel, b, bLabel] =
-    job.stage === "done" ? [hms(job.elapsed), "заняло", mb(job.out_bytes), "файл"]
+    job.stage === "done" ? [hms(job.elapsed), "заняло", mb(job.out_bytes), job.files > 1 ? `${job.files} ${plural(job.files, "файл", "файла", "файлов")}` : "файл"]
     : job.stage === "mix" ? [job.realtime > 0 ? `×${Math.round(job.realtime)}` : "—", "к реальному времени", hms(job.eta), "осталось"]
     : [speed(job.speed), "МБ/с", hms(job.eta), "осталось"];
   $("speed").textContent = running || job.stage === "done" ? a : "—";
@@ -72,7 +72,9 @@ export function live(job, queued) {
   const done = job.status === "done";
   $("done").hidden = !done;
   if (done) {
-    $("done").innerHTML = `<b>Готово</b><span class="muted file" title="${esc(job.path)}">${esc(job.path?.split("/").pop())}</span>
+    const name = job.path?.split("/").pop() || "";
+    const label = /\.[a-z0-9]{2,5}$/i.test(name) ? name : `папка «${name}»`;
+    $("done").innerHTML = `<b>Готово</b><span class="muted file" title="${esc(job.path)}">${esc(label)}</span>
       <button type="button" class="linkish" data-reveal="${esc(job.path)}">Показать в папке</button>`;
   }
 }

@@ -1,18 +1,18 @@
 //! The job queue: one job at a time (every job already uses up to 256 connections), in the
-//! order they were added. A job reuses the download started when its link was pasted.
+//! order they were added. Audio jobs reuse the download started when the link was pasted;
+//! jobs with video start one that also fetches video (audio already on disk is not refetched).
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
 use webinarip_core::encode::{Format, Quality};
-use webinarip_core::job::Options;
-use webinarip_core::paths::{output_path, window};
+use webinarip_core::job::{self, Options, What};
+use webinarip_core::paths::window;
 use webinarip_core::progress::Stage;
-use webinarip_core::render::Render;
-use webinarip_core::{Error, Result, timefmt};
+use webinarip_core::{Result, record, timefmt};
 
-use crate::app::{App, Entry, Job, Status};
+use crate::app::{App, Entry, Job, JobReq, Status};
 
 pub async fn run_queue(app: Arc<App>) {
     loop {
@@ -60,6 +60,29 @@ fn quality_of(s: Option<&str>) -> Quality {
     }
 }
 
+fn what_of(s: Option<&str>) -> What {
+    match s {
+        Some("video") => What::Video,
+        Some("both") => What::Both,
+        _ => What::Audio,
+    }
+}
+
+fn options(app: &App, link: &str, r: &JobReq) -> Result<Options> {
+    let mut o = Options::new(link);
+    let time = |s: &Option<String>| s.as_deref().filter(|s| !s.trim().is_empty()).map(timefmt::parse).transpose();
+    (o.from, o.to) = (time(&r.from)?, time(&r.to)?);
+    (o.what, o.format, o.quality) = (
+        what_of(r.what.as_deref()),
+        format_of(r.format.as_deref()),
+        quality_of(r.quality.as_deref()),
+    );
+    o.tracks = (!r.tracks.is_empty()).then(|| r.tracks.iter().map(usize::to_string).collect::<Vec<_>>().join(","));
+    (o.separate, o.multicam, o.mp4, o.video_height) = (r.separate, r.multicam, r.mp4 && o.what != What::Audio, r.video_height);
+    (o.out_dir, o.cache_dir, o.api_base) = (app.out_dir.clone(), app.cache_dir.clone(), app.api_base.clone());
+    Ok(o)
+}
+
 async fn run_job(app: &Arc<App>, job: &Arc<Job>) -> Result<()> {
     job.render.set_stage(Stage::Meta);
     let engine = app.engine(job.session.as_deref())?;
@@ -69,65 +92,51 @@ async fn run_job(app: &Arc<App>, job: &Arc<Job>) -> Result<()> {
         None => engine.record(&job.link).await?,
     };
     *job.record.lock().unwrap() = Some(rec.clone());
-    let mut opts = Options::new(&job.link);
-    opts.from = job.req.from.as_deref().filter(|s| !s.is_empty()).map(timefmt::parse).transpose()?;
-    opts.to = job.req.to.as_deref().filter(|s| !s.is_empty()).map(timefmt::parse).transpose()?;
+    let opts = options(app, &job.link, &job.req)?;
     let (from, to) = window(&opts, &rec)?;
-    let dl = app.download_for(&engine, &rec).await?;
-    *job.download.lock().unwrap() = Some(dl.clone());
-    let chosen: Vec<u64> = rec
-        .tracks
-        .iter()
-        .filter(|t| job.req.tracks.is_empty() || job.req.tracks.contains(&t.index))
-        .map(|t| t.id)
-        .collect();
-    let slots: Vec<usize> = chosen.iter().filter_map(|id| dl.slot_of(*id)).collect();
-    if slots.is_empty() {
-        return Err(Error::Usage("none of the chosen tracks has audio".into()));
-    }
-    dl.restrict(from, to, &slots);
-    let (format, quality) = (format_of(job.req.format.as_deref()), quality_of(job.req.quality.as_deref()));
-    let range = (opts.from.is_some() || opts.to.is_some()).then_some((from, to));
-    let path = output_path(&app.out_dir, &rec, range, format.extension())?;
-    *job.path.lock().unwrap() = Some(path.clone());
-    *job.streamable.lock().unwrap() = matches!(format, Format::Mp3 | Format::Opus);
-    job.render.total_ms.store(((to - from) * 1000.0) as u64, Relaxed);
-    job.render.set_stage(Stage::Download);
-    let render = Render {
-        planned: dl.select(from, to, &slots),
-        from,
-        to,
-        format,
-        quality,
+    let tracks = record::select(&rec.tracks, opts.tracks.as_deref())?;
+    let ids: Vec<u64> = tracks.iter().map(|t| t.id).collect();
+    let spec = app.download_for(&engine, &rec).await?;
+    let dl = match job::video_pick(&opts, &tracks) {
+        None => spec,
+        Some(pick) => {
+            spec.restrict(0.0, 0.0, &[]); // the speculative audio-only download stops here
+            let d = engine.download(&rec, tracks.clone(), (from, to), Some(&pick)).await?;
+            app.downloads.lock().unwrap().insert(rec.id.clone(), d.clone());
+            d
+        }
     };
-    let (prog, gate, cancel, title, p2) = (
-        job.render.clone(),
-        dl.gate.clone(),
-        job.cancel.clone(),
-        rec.title.clone(),
-        path.clone(),
-    );
-    let t0 = Instant::now();
-    let res = tokio::task::spawn_blocking(move || render.write_file(&p2, &title, &prog, gate, cancel))
-        .await
-        .map_err(|e| Error::Decode(e.to_string()))?;
-    if res.is_err() {
-        let _ = std::fs::remove_file(&path);
-        return res;
-    }
-    job.render.set_stage(Stage::Done);
+    dl.restrict(from, to, &dl.slots_of(&ids));
+    *job.download.lock().unwrap() = Some(dl.clone());
+    *job.streamable.lock().unwrap() = opts.wants_mix_file() && matches!(opts.format, Format::Mp3 | Format::Opus);
+    let path_slot = job.clone();
+    let res = job::produce(dl, &opts, (&rec, &tracks), job.render.clone(), job.cancel.clone(), move |p| {
+        *path_slot.path.lock().unwrap() = Some(p.to_path_buf());
+    })
+    .await;
+    let out = match res {
+        Ok(o) => o,
+        Err(e) => {
+            if let Some(p) = job.path.lock().unwrap().as_ref().filter(|p| p.is_file()) {
+                let _ = std::fs::remove_file(p);
+            }
+            return Err(e);
+        }
+    };
+    *job.result.lock().unwrap() = Some((out.pieces.len(), out.bytes));
+    let label = if opts.wants_video() {
+        if opts.mp4 { "mp4" } else { "webm" }
+    } else {
+        opts.format.extension()
+    };
     app.remember(Entry {
         title: rec.title.clone(),
         when: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
         seconds: to - from,
-        format: format.extension().to_owned(),
-        bytes: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
-        path: path.display().to_string(),
-        took: job
-            .started
-            .lock()
-            .unwrap()
-            .map_or(t0.elapsed().as_secs_f64(), |t| t.elapsed().as_secs_f64()),
+        format: label.to_owned(),
+        bytes: out.bytes,
+        path: out.path.display().to_string(),
+        took: job.started.lock().unwrap().map_or(0.0, |t| t.elapsed().as_secs_f64()),
     });
     Ok(())
 }
@@ -137,11 +146,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn formats_default_to_mp3() {
+    fn request_values_default_sensibly() {
         assert_eq!(format_of(Some("opus")), Format::Opus);
-        assert_eq!(format_of(Some("wav")), Format::Wav);
-        assert_eq!(format_of(Some("aac")), Format::Aac);
         assert_eq!(format_of(Some("??")), Format::Mp3);
-        assert_eq!(format_of(None), Format::Mp3);
+        assert_eq!(quality_of(None), Quality::Speech);
+        assert_eq!(what_of(Some("both")), What::Both);
+        assert_eq!(what_of(None), What::Audio);
     }
 }

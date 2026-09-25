@@ -34,8 +34,10 @@ pub struct JobView {
     pub audio: bool,
     /// Mixing speed: seconds of output per second of wall time.
     pub realtime: f64,
-    /// Size of the output file so far.
+    /// Size of the output file so far; once done, of all files.
     pub out_bytes: u64,
+    /// Number of files produced (once done).
+    pub files: usize,
     pub path: Option<String>,
     pub error: Option<String>,
     pub elapsed: f64,
@@ -103,7 +105,11 @@ fn job_view(job: &Job) -> JobView {
         http429: d.http429.load(Relaxed),
         audio: *job.streamable.lock().unwrap() && mixed >= 2.0 || status == Status::Done,
         realtime,
-        out_bytes: path.as_ref().and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len()),
+        out_bytes: job.result.lock().unwrap().map_or_else(
+            || path.as_ref().and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len()),
+            |r| r.1,
+        ),
+        files: job.result.lock().unwrap().map_or(1, |r| r.0),
         path: path.as_ref().map(|p| p.display().to_string()),
         error: job.error.lock().unwrap().clone(),
         elapsed,

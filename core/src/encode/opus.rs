@@ -12,7 +12,7 @@ use crate::Result;
 
 const SERIAL: u32 = 0x7765_6269;
 /// Encoder look-ahead at 48 kHz that players skip at the start.
-const PRE_SKIP: u16 = 312;
+pub(crate) const PRE_SKIP: u16 = 312;
 
 pub struct OggOpus {
     enc: OpusEncoder,
@@ -27,7 +27,7 @@ pub struct OggOpus {
     held: Option<Vec<u8>>,
 }
 
-fn head(channels: u8, rate: u32) -> Vec<u8> {
+pub(crate) fn head(channels: u8, rate: u32) -> Vec<u8> {
     let mut h = b"OpusHead".to_vec();
     h.extend_from_slice(&[1, channels]);
     h.extend_from_slice(&PRE_SKIP.to_le_bytes());

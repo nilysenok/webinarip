@@ -20,8 +20,8 @@
     <p id="probe" class="probe" aria-live="polite"></p>
     <div class="modes" role="radiogroup" aria-label="Что скачать">
       <label><input type="radio" name="what" value="audio" checked> аудио</label>
-      <label class="soon" title="в следующей версии"><input type="radio" name="what" value="video" disabled> видео</label>
-      <label class="soon" title="в следующей версии"><input type="radio" name="what" value="both" disabled> оба</label>
+      <label title="видео участников в WebM (кадры без перекодирования) с общим звуком"><input type="radio" name="what" value="video"> видео</label>
+      <label title="общий звук и видео участников"><input type="radio" name="what" value="both"> оба</label>
       <button type="button" id="more" class="more" aria-expanded="false" aria-controls="params">Параметры</button>
     </div>
   </header>
@@ -48,6 +48,12 @@
     <div class="row">
       <span class="k">Дорожки</span>
       <div id="tracks" class="chips"><span class="hint">появятся после вставки ссылки</span></div>
+    </div>
+    <div class="row">
+      <span class="k">Ещё</span>
+      <label class="check"><input type="checkbox" id="separate"> дорожки участников (.m4a)</label>
+      <label class="check"><input type="checkbox" id="multicam"> монтажный проект (FCPXML, EDL)</label>
+      <label class="check" title="перекодирует видео системным ffmpeg — минуты, а не секунды"><input type="checkbox" id="mp4"> видео в MP4 (ffmpeg, медленно)</label>
     </div>
     <div class="row">
       <span class="k">Доступ</span>

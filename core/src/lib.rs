@@ -5,10 +5,12 @@
 
 pub mod cache;
 pub mod decode;
+pub mod deliver;
 pub mod dsp;
 pub mod encode;
 pub mod engine;
 pub mod error;
+pub mod export;
 pub mod fetch;
 mod hedge;
 pub mod hls;
@@ -25,6 +27,7 @@ pub mod render;
 mod rush;
 pub mod stream;
 pub mod timefmt;
+pub mod video;
 mod worker;
 
 pub use error::{Error, Result};

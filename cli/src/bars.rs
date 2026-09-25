@@ -78,8 +78,24 @@ pub fn summary(out: &Output, took: Duration) {
     let pct = |q| p.percentile(q).map_or("—".into(), |s| format!("{s:.2} s"));
     println!();
     println!("✔ {}", out.path.display());
+    if out.pieces.len() > 1 {
+        for p in &out.pieces {
+            let rel = p.path.strip_prefix(&out.dir).unwrap_or(&p.path);
+            println!("  · {} (from {}, {})", rel.display(), hms(p.offset), hms(p.duration));
+        }
+        let extras: Vec<_> = ["fcpxml", "edl"]
+            .iter()
+            .filter_map(|e| {
+                std::fs::read_dir(&out.dir)
+                    .ok()?
+                    .flatten()
+                    .find(|f| f.path().extension().is_some_and(|x| x == *e))
+            })
+            .collect();
+        extras.iter().for_each(|f| println!("  · {}", f.file_name().to_string_lossy()));
+    }
     println!(
-        "  {} of audio from {} tracks · {:.1} MB · total {:.1} s (download {:.1} s, mix+encode {:.1} s)",
+        "  {} from {} tracks · {:.1} MB · total {:.1} s (download {:.1} s, mix+encode {:.1} s)",
         hms(out.seconds),
         out.tracks,
         out.bytes as f64 / 1e6,

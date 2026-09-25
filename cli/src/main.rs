@@ -1,118 +1,18 @@
-//! `webinarip <link>` — download a webinar recording as one audio file.
+//! `webinarip <link>` — download a webinar recording: audio, videos, participants' tracks.
 //! Only for recordings you have the rights to.
 
+mod args;
 mod bars;
 mod serve;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use clap::{ArgGroup, Parser, ValueEnum};
-use webinarip_core::encode::{Format, Quality};
+use args::{Cli, options};
+use clap::Parser;
 use webinarip_core::job::{self, Options};
 use webinarip_core::progress::Progress;
-use webinarip_core::{Error, HARD_CAP, http::Http, timefmt};
-
-#[derive(Copy, Clone, ValueEnum)]
-enum Q {
-    /// Speech (default): mono, MP3 64 kbit/s — half the size of stereo, same voice
-    Speech,
-    /// Stereo 48 kHz, MP3 128 kbit/s
-    High,
-    /// 16 kHz mono, lowest bitrate — for transcription
-    Low,
-}
-
-#[derive(Parser)]
-#[command(
-    version,
-    about = "Download a webinar recording as one audio file. Only for recordings you have the rights to."
-)]
-#[command(group(ArgGroup::new("what").args(["audio", "video", "both"])))]
-#[command(group(ArgGroup::new("codec").args(["opus", "aac", "wav"])))]
-struct Cli {
-    /// Recording link: https://…/record-new/<id>
-    link: String,
-    /// Audio only (default)
-    #[arg(long)]
-    audio: bool,
-    /// Video (not in this version yet)
-    #[arg(long)]
-    video: bool,
-    /// Audio and video (not in this version yet)
-    #[arg(long)]
-    both: bool,
-    /// Start of the range: 75, 01:15, 1:02:03, 1h2m
-    #[arg(long, value_name = "TIME")]
-    from: Option<String>,
-    /// End of the range
-    #[arg(long, value_name = "TIME")]
-    to: Option<String>,
-    /// Tracks to mix: host,3,5 (numbers from --list); all by default
-    #[arg(long, value_name = "LIST")]
-    tracks: Option<String>,
-    #[arg(long, value_enum, default_value = "speech")]
-    quality: Q,
-    /// Opus in Ogg instead of MP3 (smallest files)
-    #[arg(long)]
-    opus: bool,
-    /// AAC in .m4a (AudioToolbox on macOS, ffmpeg elsewhere)
-    #[arg(long)]
-    aac: bool,
-    /// 16-bit WAV (for transcription tools)
-    #[arg(long)]
-    wav: bool,
-    /// Output directory; every run gets its own dated folder inside
-    #[arg(long, default_value = ".")]
-    out: PathBuf,
-    /// Parallel connections, at most 256
-    #[arg(long, default_value_t = HARD_CAP, value_name = "N")]
-    connections: usize,
-    /// Session id for private recordings (never written to disk)
-    #[arg(long, env = "WEBINARIP_SESSION_ID", hide_env_values = true)]
-    session_id: Option<String>,
-    /// Segment cache directory
-    #[arg(long, value_name = "DIR")]
-    cache_dir: Option<PathBuf>,
-    /// List the tracks of the recording and exit
-    #[arg(long)]
-    list: bool,
-    /// Metadata API base URL
-    #[arg(long, hide = true)]
-    api: Option<String>,
-}
-
-fn options(cli: &Cli) -> Result<Options, Error> {
-    let mut o = Options::new(&cli.link);
-    o.session_id = cli.session_id.clone();
-    o.format = if cli.opus {
-        Format::Opus
-    } else if cli.aac {
-        Format::Aac
-    } else if cli.wav {
-        Format::Wav
-    } else {
-        Format::Mp3
-    };
-    o.quality = match cli.quality {
-        Q::Speech => Quality::Speech,
-        Q::High => Quality::High,
-        Q::Low => Quality::Low,
-    };
-    o.from = cli.from.as_deref().map(timefmt::parse).transpose()?;
-    o.to = cli.to.as_deref().map(timefmt::parse).transpose()?;
-    o.tracks = cli.tracks.clone();
-    o.out_dir = cli.out.clone();
-    o.connections = cli.connections.clamp(1, HARD_CAP);
-    if let Some(d) = &cli.cache_dir {
-        o.cache_dir = d.clone();
-    }
-    if let Some(a) = &cli.api {
-        o.api_base = a.clone();
-    }
-    Ok(o)
-}
+use webinarip_core::{Error, http::Http, timefmt};
 
 async fn list(opts: &Options) -> Result<(), Error> {
     let http = Http::new(opts.session_id.as_deref(), 4)?;
@@ -132,10 +32,10 @@ async fn list(opts: &Options) -> Result<(), Error> {
 }
 
 async fn run(cli: Cli) -> Result<(), Error> {
-    if cli.video || cli.both {
-        return Err(Error::Usage("video is coming in the next version; for now use --audio".into()));
-    }
     let opts = options(&cli)?;
+    if opts.mp4 {
+        eprintln!("note: --mp4 re-encodes every video with ffmpeg — expect minutes, not seconds");
+    }
     if cli.list {
         return list(&opts).await;
     }

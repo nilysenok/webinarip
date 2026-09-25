@@ -1,12 +1,21 @@
-//! What to download for each track: the audio rendition's init piece and segments, each with
-//! its place on the shared recording timeline, so a plan can be cut to any `[from, to)`.
+//! What to download for each track: its audio rendition and, when asked, one video rendition —
+//! init piece and segments, each with its place on the shared recording timeline, so a plan
+//! can be cut to any `[from, to)`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::hls::{self, Media};
 use crate::http::Http;
 use crate::record::{Record, Track};
-use crate::{Error, Result, cache, hls};
+use crate::{Error, Result, cache};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Kind {
+    Audio,
+    /// Frame height of the chosen rendition, from the playlist.
+    Video(u32),
+}
 
 #[derive(Debug, Clone)]
 pub struct Piece {
@@ -20,10 +29,18 @@ pub struct Piece {
 #[derive(Debug, Clone)]
 pub struct Planned {
     pub track: Track,
-    /// Position of the track in the download — the key for per-track progress.
+    pub kind: Kind,
+    /// Position in the download — the key for per-track progress.
     pub slot: usize,
     /// Init piece first, then segments in order.
     pub pieces: Vec<Piece>,
+}
+
+/// Which tracks get video, and the highest frame height wanted (`None` = best).
+#[derive(Debug, Clone, Default)]
+pub struct VideoPick {
+    pub tracks: Vec<u64>,
+    pub max_height: Option<u32>,
 }
 
 impl Planned {
@@ -48,44 +65,79 @@ impl Planned {
     }
 }
 
-async fn plan_track(http: Arc<Http>, root: PathBuf, rec_id: String, track: Track, slot: usize) -> Result<Option<Planned>> {
-    let Some(master_url) = track.hls.clone() else { return Ok(None) };
-    let master = hls::parse_master(&master_url, &String::from_utf8_lossy(&http.get_ok(&master_url).await?))?;
-    let Some(audio) = master.audio else { return Ok(None) };
-    let media = hls::parse_media(&audio, &String::from_utf8_lossy(&http.get_ok(&audio).await?))?;
-    let dir = cache::track_dir(&root, &rec_id, track.id, "a");
-    let mut pieces = Vec::with_capacity(media.segments.len() + 1);
-    if let Some(url) = media.init {
-        pieces.push(Piece {
+fn pieces(track: &Track, media: &Media, dir: &std::path::Path) -> Vec<Piece> {
+    let mut out = Vec::with_capacity(media.segments.len() + 1);
+    if let Some(url) = &media.init {
+        out.push(Piece {
             at: None,
             end: track.start,
-            url,
-            path: cache::init_path(&dir),
+            url: url.clone(),
+            path: cache::init_path(dir),
         });
     }
     for (i, seg) in media.segments.iter().enumerate() {
         let at = track.start + seg.start;
-        pieces.push(Piece {
+        out.push(Piece {
             at: Some(at),
             end: at + seg.duration,
             url: seg.url.clone(),
-            path: cache::segment_path(&dir, i),
+            path: cache::segment_path(dir, i),
         });
     }
-    Ok(Some(Planned { track, slot, pieces }))
+    out
 }
 
-/// Plans the audio of `tracks`; tracks without an audio rendition are skipped.
-pub async fn plan(http: &Arc<Http>, cache_dir: &std::path::Path, rec: &Record, tracks: Vec<Track>) -> Result<Vec<Planned>> {
+async fn plan_track(http: Arc<Http>, root: PathBuf, rec_id: String, track: Track, video: Option<Option<u32>>) -> Result<Vec<Planned>> {
+    let Some(master_url) = track.hls.clone() else { return Ok(vec![]) };
+    let master = hls::parse_master(&master_url, &String::from_utf8_lossy(&http.get_ok(&master_url).await?))?;
+    let mut out = Vec::new();
+    if let Some(audio) = &master.audio {
+        let media = hls::parse_media(audio, &String::from_utf8_lossy(&http.get_ok(audio).await?))?;
+        let pieces = pieces(&track, &media, &cache::track_dir(&root, &rec_id, track.id, "a"));
+        out.push(Planned {
+            track: track.clone(),
+            kind: Kind::Audio,
+            slot: 0,
+            pieces,
+        });
+    }
+    if let Some(v) = video.and_then(|h| hls::pick(&master.variants, h)) {
+        let media = hls::parse_media(&v.url, &String::from_utf8_lossy(&http.get_ok(&v.url).await?))?;
+        let pieces = pieces(
+            &track,
+            &media,
+            &cache::track_dir(&root, &rec_id, track.id, &format!("v{}", v.height)),
+        );
+        out.push(Planned {
+            track,
+            kind: Kind::Video(v.height),
+            slot: 0,
+            pieces,
+        });
+    }
+    Ok(out)
+}
+
+/// Plans the audio of `tracks` and the video of those in `video`. Tracks without the
+/// rendition are skipped. Slots are numbered in (track, kind) order.
+pub async fn plan(
+    http: &Arc<Http>,
+    cache_dir: &std::path::Path,
+    rec: &Record,
+    tracks: Vec<Track>,
+    video: Option<&VideoPick>,
+) -> Result<Vec<Planned>> {
     let mut set = tokio::task::JoinSet::new();
-    for (slot, t) in tracks.into_iter().enumerate() {
-        set.spawn(plan_track(http.clone(), cache_dir.to_path_buf(), rec.id.clone(), t, slot));
+    for t in tracks {
+        let v = video.filter(|v| v.tracks.contains(&t.id)).map(|v| v.max_height);
+        set.spawn(plan_track(http.clone(), cache_dir.to_path_buf(), rec.id.clone(), t, v));
     }
     let mut planned = Vec::new();
     while let Some(r) = set.join_next().await {
         planned.extend(r.map_err(|e| Error::Net(e.to_string()))??);
     }
-    planned.sort_by_key(|p| p.track.index);
+    planned.sort_by_key(|p| (p.track.index, p.kind));
+    planned.iter_mut().enumerate().for_each(|(i, p)| p.slot = i);
     Ok(planned)
 }
 
@@ -113,15 +165,17 @@ mod tests {
             duration: 30.0,
             hls: None,
         };
+        let pieces = vec![
+            piece(None, 10.0),
+            piece(Some(10.0), 20.0),
+            piece(Some(20.0), 30.0),
+            piece(Some(30.0), 40.0),
+        ];
         let p = Planned {
             track,
+            kind: Kind::Audio,
             slot: 0,
-            pieces: vec![
-                piece(None, 10.0),
-                piece(Some(10.0), 20.0),
-                piece(Some(20.0), 30.0),
-                piece(Some(30.0), 40.0),
-            ],
+            pieces,
         };
         let w = p.window(25.0, 32.0).unwrap();
         assert_eq!(

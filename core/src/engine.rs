@@ -12,7 +12,7 @@ use crate::decode::Gate;
 use crate::fetch::{Fetcher, Item};
 use crate::http::Http;
 use crate::limiter::Limiter;
-use crate::plan::{Planned, plan};
+use crate::plan::{Kind, Planned, VideoPick, plan};
 use crate::progress::{Progress, Stage};
 use crate::record::{self, Record, Track};
 use crate::{Error, Result};
@@ -48,9 +48,16 @@ impl Engine {
         record::parse(&id, &json)
     }
 
-    /// Plans `tracks` within `[from, to)` and starts downloading right away, in the background.
-    pub async fn download(self: &Arc<Self>, rec: &Record, tracks: Vec<Track>, from: f64, to: f64) -> Result<Arc<Download>> {
-        let planned: Vec<Planned> = plan(&self.http, &self.cache_dir, rec, tracks)
+    /// Plans `tracks` (audio, plus video for `video`) within `[from, to)` and starts downloading
+    /// right away, in the background. Audio goes first: video segments queue after all audio.
+    pub async fn download(
+        self: &Arc<Self>,
+        rec: &Record,
+        tracks: Vec<Track>,
+        (from, to): (f64, f64),
+        video: Option<&VideoPick>,
+    ) -> Result<Arc<Download>> {
+        let planned: Vec<Planned> = plan(&self.http, &self.cache_dir, rec, tracks, video)
             .await?
             .iter()
             .filter_map(|p| p.window(from, to))
@@ -66,10 +73,12 @@ impl Engine {
         let items = planned
             .iter()
             .flat_map(|p| {
+                let after = if p.kind == Kind::Audio { 0.0 } else { 1e7 };
                 p.pieces.iter().map(move |x| Item {
                     url: x.url.clone(),
                     path: x.path.clone(),
                     at: x.at.unwrap_or(-1.0),
+                    rank: x.at.unwrap_or(-1.0) + after,
                     slot: p.slot,
                 })
             })
@@ -111,9 +120,27 @@ impl Download {
             .retain(|it| slots.contains(&it.slot) && (it.at < 0.0 || (it.at < to && it.at + 20.0 > from)));
     }
 
-    /// Track slot of each track id in this download.
+    /// Audio slot of a track in this download.
     pub fn slot_of(&self, track_id: u64) -> Option<usize> {
-        self.planned.iter().find(|p| p.track.id == track_id).map(|p| p.slot)
+        self.planned
+            .iter()
+            .find(|p| p.track.id == track_id && p.kind == Kind::Audio)
+            .map(|p| p.slot)
+    }
+
+    /// Slots (audio and video) of the given tracks.
+    pub fn slots_of(&self, track_ids: &[u64]) -> Vec<usize> {
+        self.planned
+            .iter()
+            .filter(|p| track_ids.contains(&p.track.id))
+            .map(|p| p.slot)
+            .collect()
+    }
+
+    /// Planned pieces of `kind` for the given tracks, cut to `[from, to)`.
+    pub fn of_kind(&self, from: f64, to: f64, track_ids: &[u64], video: bool) -> Vec<Planned> {
+        let want = |p: &&Planned| track_ids.contains(&p.track.id) && matches!(p.kind, Kind::Video(_)) == video;
+        self.planned.iter().filter(want).filter_map(|p| p.window(from, to)).collect()
     }
 
     pub fn cancel(&self) {

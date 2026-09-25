@@ -78,6 +78,8 @@ $("form").addEventListener("submit", async (e) => {
   try {
     const r = await api("/api/jobs", {
       links, session_id: $("session").value || null, format: opts.format, quality: opts.quality,
+      what: document.querySelector('input[name="what"]:checked')?.value || "audio",
+      separate: $("separate").checked, multicam: $("multicam").checked, mp4: $("mp4").checked,
       from: $("from").value.trim(), to: $("to").value.trim(), tracks: [...picked],
     });
     jobId = r.ids[0];

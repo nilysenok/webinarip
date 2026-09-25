@@ -23,6 +23,15 @@ pub struct JobReq {
     /// 1-based track numbers; empty = all.
     #[serde(default)]
     pub tracks: Vec<usize>,
+    /// audio | video | both
+    pub what: Option<String>,
+    #[serde(default)]
+    pub separate: bool,
+    #[serde(default)]
+    pub multicam: bool,
+    #[serde(default)]
+    pub mp4: bool,
+    pub video_height: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -51,6 +60,8 @@ pub struct Job {
     pub started: Mutex<Option<Instant>>,
     /// Wall time of the finished job, seconds.
     pub took: Mutex<Option<f64>>,
+    /// Files produced and their total size, once done.
+    pub result: Mutex<Option<(usize, u64)>>,
     pub streamable: Mutex<bool>,
 }
 
@@ -114,7 +125,7 @@ impl App {
         if let Some(d) = self.downloads.lock().unwrap().get(&rec.id).filter(|d| !d.is_finished()) {
             return Ok(d.clone());
         }
-        let d = engine.download(rec, rec.tracks.clone(), 0.0, rec.duration).await?;
+        let d = engine.download(rec, rec.tracks.clone(), (0.0, rec.duration), None).await?;
         self.downloads.lock().unwrap().insert(rec.id.clone(), d.clone());
         Ok(d)
     }
@@ -139,6 +150,7 @@ impl App {
             cancel: Arc::new(AtomicBool::new(false)),
             started: Mutex::default(),
             took: Mutex::default(),
+            result: Mutex::default(),
             streamable: Mutex::new(false),
         };
         self.jobs.lock().unwrap().push(Arc::new(job));

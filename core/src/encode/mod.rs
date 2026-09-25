@@ -8,7 +8,8 @@ mod aac;
 #[cfg(target_os = "macos")]
 mod aac_mac;
 mod mp3;
-mod opus;
+pub(crate) mod opus;
+pub mod packets;
 mod wav;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -31,6 +31,14 @@ pub struct Media {
     pub segments: Vec<Segment>,
 }
 
+/// Best variant, or the highest one not above `max_height` (the smallest if none fits).
+pub fn pick(variants: &[Variant], max_height: Option<u32>) -> Option<&Variant> {
+    match max_height {
+        None => variants.first(),
+        Some(h) => variants.iter().find(|v| v.height <= h).or(variants.last()),
+    }
+}
+
 pub fn join(base: &str, rel: &str) -> Result<String> {
     let base = url::Url::parse(base).map_err(|e| Error::Parse(format!("{base}: {e}")))?;
     Ok(base.join(rel).map_err(|e| Error::Parse(format!("{rel}: {e}")))?.to_string())
@@ -120,5 +128,19 @@ mod tests {
         assert_eq!(m.segments.len(), 2);
         assert_eq!(m.segments[1].url, "https://h/x/a1/media/2.m4s");
         assert!((m.segments[1].start - 14.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn picks_best_or_highest_under_the_limit() {
+        let v = |h| Variant {
+            width: 0,
+            height: h,
+            bandwidth: 0,
+            url: String::new(),
+        };
+        let vs = vec![v(720), v(480), v(240)];
+        assert_eq!(pick(&vs, None).unwrap().height, 720);
+        assert_eq!(pick(&vs, Some(500)).unwrap().height, 480);
+        assert_eq!(pick(&vs, Some(100)).unwrap().height, 240);
     }
 }

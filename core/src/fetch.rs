@@ -29,8 +29,10 @@ pub(crate) const DONE: u8 = 2;
 pub struct Item {
     pub url: String,
     pub path: PathBuf,
-    /// Timeline position (init pieces: before everything).
+    /// Timeline position (init pieces: -1).
     pub at: f64,
+    /// Queue order: smaller first. Audio uses its timeline position, video comes after audio.
+    pub rank: f64,
     /// Track slot, for per-track progress.
     pub slot: usize,
 }
@@ -83,7 +85,7 @@ impl Fetcher {
                 Err(_) => todo.push(it),
             }
         }
-        todo.sort_by(|a, b| a.at.total_cmp(&b.at));
+        todo.sort_by(|a, b| a.rank.total_cmp(&b.rank));
         let n = todo.len();
         Self(Arc::new(Ctx {
             http,

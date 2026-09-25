@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["core", "cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Nikita Lysenok"]
+repository = "https://github.com/nilysenok/webinarip"
+rust-version = "1.85"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

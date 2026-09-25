@@ -16,13 +16,11 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Notify, Semaphore};
 
 use crate::decode::Gate;
-use crate::hedge::{backoff, hedged_get};
 use crate::http::{Http, Response};
 use crate::limiter::Limiter;
 use crate::progress::Progress;
 use crate::{Error, Result, cache};
 
-const RETRIES: u32 = 6;
 pub(crate) const PENDING: u8 = 0;
 pub(crate) const FLIGHT: u8 = 1;
 pub(crate) const DONE: u8 = 2;
@@ -38,14 +36,14 @@ pub struct Item {
 }
 
 /// Queue entry: (tier, timeline order, attempts). Smallest first.
-type Entry = Reverse<(u8, usize, u32)>;
+pub(crate) type Entry = Reverse<(u8, usize, u32)>;
 
 pub(crate) struct Ctx {
     pub(crate) http: Arc<Http>,
     pub(crate) lim: Arc<Limiter>,
     pub(crate) prog: Arc<Progress>,
     pub(crate) items: Vec<Item>,
-    queue: Mutex<BinaryHeap<Entry>>,
+    pub(crate) queue: Mutex<BinaryHeap<Entry>>,
     /// Items not finished yet: queued, in flight or waiting out a backoff.
     pub(crate) open: AtomicUsize,
     failed: Mutex<Option<Error>>,
@@ -128,7 +126,9 @@ impl Fetcher {
 
     pub async fn run(&self) -> Result<()> {
         let rush = tokio::spawn(crate::rush::watch(self.0.clone()));
-        let workers: Vec<_> = (0..crate::HARD_CAP).map(|_| tokio::spawn(worker(self.0.clone()))).collect();
+        let workers: Vec<_> = (0..crate::HARD_CAP)
+            .map(|_| tokio::spawn(crate::worker::run(self.0.clone())))
+            .collect();
         for w in workers {
             w.await.map_err(|e| Error::Net(e.to_string()))?;
         }
@@ -181,71 +181,8 @@ impl Ctx {
         Ok(())
     }
 
-    fn fail(&self, e: Error) {
+    pub(crate) fn fail(&self, e: Error) {
         self.failed.lock().unwrap().get_or_insert(e);
         self.stop.store(true, Relaxed);
     }
-}
-
-async fn worker(ctx: Arc<Ctx>) {
-    loop {
-        if ctx.stop.load(Relaxed) || ctx.open.load(Relaxed) == 0 {
-            return;
-        }
-        if ctx.focus.load(Relaxed) {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            continue;
-        }
-        let permit = ctx.lim.acquire().await;
-        let Some(Reverse((tier, idx, attempt))) = ctx.queue.lock().unwrap().pop() else {
-            drop(permit);
-            tokio::time::sleep(Duration::from_millis(50)).await; // others are in flight or backing off
-            continue;
-        };
-        if !ctx.claim(idx, PENDING) {
-            continue; // already rushed or done
-        }
-        ctx.prog.limit.store(ctx.lim.limit(), Relaxed);
-        let t0 = Instant::now();
-        let res = hedged_get(&ctx, idx).await;
-        drop(permit);
-        if let Err(e) = settle(&ctx, (tier, idx, attempt), res, t0).await {
-            ctx.fail(e);
-        }
-    }
-}
-
-/// Stores a finished segment, or schedules a retry, or reports a fatal error.
-async fn settle(ctx: &Arc<Ctx>, (tier, idx, attempt): (u8, usize, u32), res: Result<Option<Response>>, t0: Instant) -> Result<()> {
-    let it = &ctx.items[idx];
-    match res {
-        Ok(None) => return Ok(()), // superseded: someone else brought it
-        Ok(Some(r)) if r.status == 200 => {
-            ctx.lim.on_success();
-            return ctx.finish(idx, r, t0.elapsed()).await;
-        }
-        Ok(Some(r)) if r.status == 429 => {
-            ctx.prog.http429.fetch_add(1, Relaxed);
-            ctx.lim.on_429(r.retry_after);
-        }
-        Ok(Some(r)) if matches!(r.status, 401 | 403) => return Err(Error::Access(r.status)),
-        Ok(Some(r)) if r.status == 404 => return Err(Error::Status(404, it.url.clone())),
-        Ok(Some(_)) | Err(_) => ctx.lim.on_error(),
-    }
-    if ctx.state[idx].load(Relaxed) == DONE {
-        return Ok(());
-    }
-    if attempt + 1 >= RETRIES {
-        return Err(Error::Net(format!("gave up after {RETRIES} attempts: {}", it.url)));
-    }
-    ctx.prog.retries.fetch_add(1, Relaxed);
-    ctx.state[idx].store(PENDING, Relaxed); // the rush watcher may take it before the backoff ends
-    let ctx = ctx.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(backoff(attempt)).await;
-        if ctx.state[idx].load(Relaxed) == PENDING {
-            ctx.queue.lock().unwrap().push(Reverse((tier, idx, attempt + 1)));
-        }
-    });
-    Ok(())
 }

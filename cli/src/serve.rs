@@ -7,7 +7,11 @@ use webinarip_core::Error;
 
 /// `webinarip serve` — the local web interface.
 #[derive(Parser)]
-#[command(name = "webinarip serve", bin_name = "webinarip serve", about = "Open the local web interface (127.0.0.1 only)")]
+#[command(
+    name = "webinarip serve",
+    bin_name = "webinarip serve",
+    about = "Open the local web interface (127.0.0.1 only)"
+)]
 struct Serve {
     /// Port; a free one is picked if it is busy
     #[arg(long, default_value_t = 5040)]

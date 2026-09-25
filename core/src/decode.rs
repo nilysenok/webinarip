@@ -5,10 +5,10 @@
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::formats::probe::Hint;
@@ -25,6 +25,37 @@ pub const RATE: u32 = 48_000;
 pub struct Gate {
     pub finished: AtomicBool,
     pub failed: AtomicBool,
+    /// Files a decoder is blocked on right now, and since when — the downloader rushes them.
+    waiting: Mutex<Vec<(PathBuf, Instant)>>,
+    /// Longest time any decoder was blocked on one file, milliseconds.
+    longest_ms: AtomicU64,
+}
+
+impl Gate {
+    fn wait_on(&self, path: &Path) {
+        let mut w = self.waiting.lock().unwrap();
+        if !w.iter().any(|(p, _)| p == path) {
+            w.push((path.to_path_buf(), Instant::now()));
+        }
+    }
+
+    fn done_waiting(&self, path: &Path) {
+        let mut w = self.waiting.lock().unwrap();
+        if let Some(pos) = w.iter().position(|(p, _)| p == path) {
+            let (_, since) = w.swap_remove(pos);
+            self.longest_ms.fetch_max(since.elapsed().as_millis() as u64, Relaxed);
+        }
+    }
+
+    /// The longest the mixer ever waited for a single segment — head-of-line blocking.
+    pub fn longest_wait(&self) -> Duration {
+        Duration::from_millis(self.longest_ms.load(Relaxed))
+    }
+
+    /// What the mixer is waiting for, with how long it has been waiting.
+    pub fn waited(&self) -> Vec<(PathBuf, Duration)> {
+        self.waiting.lock().unwrap().iter().map(|(p, t)| (p.clone(), t.elapsed())).collect()
+    }
 }
 
 /// The track's files read back to back as one forward-only stream. A file that is not on
@@ -52,13 +83,17 @@ impl StreamSource {
         loop {
             match File::open(path) {
                 Ok(f) => {
+                    self.gate.done_waiting(path);
                     self.open = Some(f);
                     self.next += 1;
                     return Ok(true);
                 }
                 Err(_) if self.gate.failed.load(Relaxed) => return Err(std::io::Error::other("download failed")),
                 Err(e) if self.gate.finished.load(Relaxed) => return Err(e),
-                Err(_) => std::thread::sleep(Duration::from_millis(20)),
+                Err(_) => {
+                    self.gate.wait_on(path);
+                    std::thread::sleep(Duration::from_millis(10));
+                }
             }
         }
     }

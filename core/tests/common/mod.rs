@@ -1,6 +1,8 @@
 //! A mock recording server: metadata JSON, HLS playlists and fMP4 segments from
 //! `tests/fixtures`, with a per-connection speed limit, injected 429s and one flaky segment.
 
+pub mod hol;
+
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -19,8 +21,10 @@ pub struct Stats {
     pub conns_max: AtomicUsize,
     pub segment_hits: AtomicUsize,
     pub sent_429: AtomicUsize,
+    pub stalled: AtomicUsize,
 }
 
+#[allow(dead_code)] // each test binary uses a different part of the mock
 pub struct Mock {
     pub addr: SocketAddr,
     pub stats: Arc<Stats>,
@@ -33,6 +37,8 @@ pub struct Config {
     pub first_429: usize,
     /// Answer the metadata request with 403 (private recording).
     pub private: bool,
+    /// Hold the first request for this path this long (a stuck connection).
+    pub stall: Option<(&'static str, Duration)>,
 }
 
 fn fixtures() -> PathBuf {
@@ -85,8 +91,13 @@ async fn handle(
             stats.sent_429.fetch_add(1, SeqCst);
             return reply(429, vec![]);
         }
-        if path == "/t2/a/seg1.m4s" && flaky.fetch_add(1, SeqCst) == 0 {
+        if path == "/t2/a/seg1.m4s" && cfg.stall.is_none() && flaky.fetch_add(1, SeqCst) == 0 {
             return reply(500, vec![]); // fails once, must be retried
+        }
+        if let Some((_, d)) = cfg.stall.filter(|(p, _)| *p == path) {
+            if stats.stalled.fetch_add(1, SeqCst) == 0 {
+                tokio::time::sleep(d).await;
+            }
         }
     }
     match std::fs::read(fixtures().join(path.trim_start_matches('/'))) {

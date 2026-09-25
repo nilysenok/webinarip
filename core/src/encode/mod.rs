@@ -25,9 +25,11 @@ pub enum Format {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Quality {
-    /// 48 kHz stereo.
+    /// Default: 48 kHz mono at a speech bitrate (MP3 64 kbit/s) — half the size, same voice.
+    Speech,
+    /// 48 kHz stereo at music bitrates (MP3 128 kbit/s).
     High,
-    /// 16 kHz mono, low bitrate — speech and transcription.
+    /// 16 kHz mono, lowest bitrate — for transcription tools.
     Low,
 }
 
@@ -50,10 +52,14 @@ impl Format {
 
     pub fn spec(self, q: Quality) -> Spec {
         let (rate, channels) = match q {
+            Quality::Speech => (48_000, 1),
             Quality::High => (48_000, 2),
             Quality::Low => (16_000, 1),
         };
         let kbps = match (self, q) {
+            (Format::Mp3, Quality::Speech) => 64,
+            (Format::Opus, Quality::Speech) => 32,
+            (Format::Aac, Quality::Speech) => 64,
             (Format::Mp3, Quality::High) => 128,
             (Format::Mp3, Quality::Low) => 32,
             (Format::Opus, Quality::High) => 96,

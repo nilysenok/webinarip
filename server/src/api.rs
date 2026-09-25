@@ -1,6 +1,5 @@
 //! HTTP handlers. Everything listens on 127.0.0.1 only.
 
-use std::io::SeekFrom;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Duration;
@@ -11,7 +10,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::AsyncReadExt;
 
 use crate::app::{App, JobReq, Status};
 use crate::view::{self, record_view};
@@ -130,7 +129,7 @@ pub async fn audio(State(app): Shared, Path(id): Path<u64>, headers: HeaderMap) 
     };
     let ctype = content_type(&path);
     if *job.status.lock().unwrap() == Status::Done {
-        return file_range(&path, ctype, &headers).await;
+        return crate::files::serve(&path, ctype, &headers).await;
     }
     let stream = futures_util::stream::unfold((None::<tokio::fs::File>, job), |(mut file, job)| async move {
         let mut buf = vec![0u8; 64 * 1024];
@@ -155,44 +154,6 @@ pub async fn audio(State(app): Shared, Path(id): Path<u64>, headers: HeaderMap) 
     (
         [(header::CONTENT_TYPE, ctype), (header::CACHE_CONTROL, "no-store")],
         Body::from_stream(stream),
-    )
-        .into_response()
-}
-
-async fn file_range(path: &std::path::Path, ctype: &'static str, headers: &HeaderMap) -> Response {
-    let Ok(mut f) = tokio::fs::File::open(path).await else {
-        return fail(StatusCode::NOT_FOUND, "file is gone");
-    };
-    let len = f.metadata().await.map(|m| m.len()).unwrap_or(0);
-    let range = headers
-        .get(header::RANGE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("bytes="));
-    let (start, end) = match range.and_then(|r| r.split_once('-')) {
-        Some((a, b)) => (
-            a.parse().unwrap_or(0),
-            b.parse().unwrap_or(len.saturating_sub(1)).min(len.saturating_sub(1)),
-        ),
-        None => (0, len.saturating_sub(1)),
-    };
-    let mut body = vec![0u8; (end + 1).saturating_sub(start) as usize];
-    if f.seek(SeekFrom::Start(start)).await.is_err() || f.read_exact(&mut body).await.is_err() {
-        return fail(StatusCode::RANGE_NOT_SATISFIABLE, "bad range");
-    }
-    let code = if range.is_some() {
-        StatusCode::PARTIAL_CONTENT
-    } else {
-        StatusCode::OK
-    };
-    let cr = format!("bytes {start}-{end}/{len}");
-    (
-        code,
-        [
-            (header::CONTENT_TYPE, ctype),
-            (header::ACCEPT_RANGES, "bytes"),
-            (header::CONTENT_RANGE, cr.as_str()),
-        ],
-        body,
     )
         .into_response()
 }

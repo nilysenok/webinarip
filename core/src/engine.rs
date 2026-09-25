@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 
-use tokio::sync::watch;
+use tokio::sync::{Semaphore, watch};
 
 use crate::decode::Gate;
 use crate::fetch::{Fetcher, Item};
@@ -19,16 +19,23 @@ use crate::{Error, Result};
 
 pub struct Engine {
     pub http: Arc<Http>,
+    /// Regular workers share this AIMD limit…
     pub lim: Arc<Limiter>,
+    /// …and this small pool is kept for rushing what the mixer waits for. Together ≤ the ceiling.
+    pub rush: Arc<Semaphore>,
     pub api_base: String,
     pub cache_dir: PathBuf,
 }
 
 impl Engine {
     pub fn new(session_id: Option<&str>, connections: usize, api_base: &str, cache_dir: PathBuf) -> Result<Arc<Self>> {
+        let connections = connections.clamp(2, crate::HARD_CAP);
+        let reserve = crate::rush::reserve_for(connections);
+        let regular = connections - reserve;
         Ok(Arc::new(Self {
             http: Arc::new(Http::new(session_id, crate::HARD_CAP)?),
-            lim: Limiter::new(64.min(connections), connections),
+            lim: Limiter::new(64.min(regular), regular),
+            rush: Arc::new(Semaphore::new(reserve)),
             api_base: api_base.to_owned(),
             cache_dir,
         }))
@@ -67,8 +74,9 @@ impl Engine {
                 })
             })
             .collect();
-        let fetcher = Arc::new(Fetcher::new(self.http.clone(), self.lim.clone(), prog.clone(), items));
         let (gate, (tx, rx)) = (Arc::new(Gate::default()), watch::channel(None));
+        let pools = (self.lim.clone(), self.rush.clone());
+        let fetcher = Arc::new(Fetcher::new(self.http.clone(), pools, prog.clone(), gate.clone(), items));
         let dl = Arc::new(Download {
             record: rec.clone(),
             planned,

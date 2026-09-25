@@ -3,6 +3,7 @@
 mod api;
 mod app;
 mod assets;
+mod files;
 mod open;
 mod records;
 mod runner;

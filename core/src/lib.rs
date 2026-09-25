@@ -22,6 +22,7 @@ pub mod plan;
 pub mod progress;
 pub mod record;
 pub mod render;
+mod rush;
 pub mod timefmt;
 
 pub use error::{Error, Result};

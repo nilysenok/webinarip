@@ -52,6 +52,14 @@ fn format_of(s: Option<&str>) -> Format {
     }
 }
 
+fn quality_of(s: Option<&str>) -> Quality {
+    match s {
+        Some("high") => Quality::High,
+        Some("low") => Quality::Low,
+        _ => Quality::Speech,
+    }
+}
+
 async fn run_job(app: &Arc<App>, job: &Arc<Job>) -> Result<()> {
     job.render.set_stage(Stage::Meta);
     let engine = app.engine(job.session.as_deref())?;
@@ -78,14 +86,7 @@ async fn run_job(app: &Arc<App>, job: &Arc<Job>) -> Result<()> {
         return Err(Error::Usage("none of the chosen tracks has audio".into()));
     }
     dl.restrict(from, to, &slots);
-    let (format, quality) = (
-        format_of(job.req.format.as_deref()),
-        if job.req.quality.as_deref() == Some("low") {
-            Quality::Low
-        } else {
-            Quality::High
-        },
-    );
+    let (format, quality) = (format_of(job.req.format.as_deref()), quality_of(job.req.quality.as_deref()));
     let range = (opts.from.is_some() || opts.to.is_some()).then_some((from, to));
     let path = output_path(&app.out_dir, &rec, range, format.extension())?;
     *job.path.lock().unwrap() = Some(path.clone());

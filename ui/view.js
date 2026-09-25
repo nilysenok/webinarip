@@ -66,7 +66,7 @@ export function live(job, queued) {
     if (html !== lanesKey) $("lanes").innerHTML = lanesKey = html;
   }
   $("hist").innerHTML = histogram(job.hist);
-  $("pp").textContent = job.p50 != null ? `p50 ${job.p50.toFixed(1)} с · p99 ${job.p99.toFixed(1)} с${job.http429 ? ` · 429×${job.http429}` : ""}` : "";
+  $("pp").textContent = job.p50 != null ? `p50 ${job.p50.toFixed(1)} с · p99 ${job.p99.toFixed(1)} с · ожидание ≤ ${job.mixer_wait.toFixed(1)} с${job.http429 ? ` · 429×${job.http429}` : ""}` : "";
   $("error").hidden = !job.error;
   $("error").textContent = job.error ? `Ошибка: ${job.error}` : "";
   const done = job.status === "done";

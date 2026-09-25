@@ -103,6 +103,7 @@ fn encode_mix(
         enc.finish()
     });
     let mut down = (quality == Quality::Low).then(Downsampler::default);
+    let mono = quality == Quality::Speech;
     let total = (seconds * RATE as f64).round() as u64;
     let send = |v: Vec<f32>| {
         if cancel.load(Relaxed) {
@@ -119,6 +120,7 @@ fn encode_mix(
                 d.process(block, &mut mono);
                 send(mono)
             }
+            None if mono => send(block.chunks_exact(2).map(|f| (f[0] + f[1]) * 0.5).collect()),
             None => send(block.to_vec()),
         },
         &|frames| prog.mixed_ms.store(frames * 1000 / RATE as u64, Relaxed),

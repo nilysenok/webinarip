@@ -88,13 +88,14 @@ pub fn summary(out: &Output, took: Duration) {
         out.mix_secs
     );
     println!(
-        "  segments {} ({} cached) · p50 {} · p99 {} · retries {} · hedged {} · 429: {}",
+        "  segments {} ({} cached) · p50 {} · p99 {} · retries {} · rushed {} · 429: {} · mixer waited ≤ {:.2} s",
         p.seg_done.load(Relaxed),
         p.seg_cached.load(Relaxed),
         pct(0.5),
         pct(0.99),
         p.retries.load(Relaxed),
         p.hedges.load(Relaxed),
-        p.http429.load(Relaxed)
+        p.http429.load(Relaxed),
+        out.mixer_wait.as_secs_f64()
     );
 }

@@ -28,7 +28,7 @@ impl Options {
             session_id: None,
             api_base: record::DEFAULT_API.into(),
             format: Format::Mp3,
-            quality: Quality::High,
+            quality: Quality::Speech,
             from: None,
             to: None,
             tracks: None,

@@ -25,6 +25,8 @@ pub struct Output {
     pub mix_secs: f64,
     /// Download counters (segments, latency percentiles, retries…).
     pub download: Arc<Progress>,
+    /// Longest time the mixer waited for one segment.
+    pub mixer_wait: std::time::Duration,
 }
 
 pub async fn fetch_record(http: &Http, opts: &Options) -> Result<Record> {
@@ -81,5 +83,6 @@ pub async fn run(opts: Options, prog: Arc<Progress>, on_download: impl FnOnce(Ar
         download_secs,
         mix_secs,
         download: dl.prog.clone(),
+        mixer_wait: dl.gate.longest_wait(),
     })
 }

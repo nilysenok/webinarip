@@ -28,6 +28,8 @@ pub struct JobView {
     pub hist_max: f64,
     pub hist: Vec<usize>,
     pub retries: usize,
+    /// Longest time the mixer waited for one segment, seconds.
+    pub mixer_wait: f64,
     pub http429: usize,
     pub audio: bool,
     /// Mixing speed: seconds of output per second of wall time.
@@ -97,6 +99,7 @@ fn job_view(job: &Job) -> JobView {
         hist_max,
         hist,
         retries: d.retries.load(Relaxed),
+        mixer_wait: dl.as_ref().map_or(0.0, |d| d.gate.longest_wait().as_secs_f64()),
         http429: d.http429.load(Relaxed),
         audio: *job.streamable.lock().unwrap() && mixed >= 2.0 || status == Status::Done,
         realtime,

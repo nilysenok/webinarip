@@ -40,6 +40,7 @@ async fn downloads_under_pressure_mixes_and_then_uses_the_cache() {
         per_conn_rate: 40_000,
         first_429: 3,
         private: false,
+        stall: None,
     })
     .await;
     let dir = temp("e2e");
@@ -87,6 +88,7 @@ async fn range_and_track_selection() {
         per_conn_rate: 1_000_000,
         first_429: 0,
         private: false,
+        stall: None,
     })
     .await;
     let dir = temp("range");
@@ -111,6 +113,7 @@ async fn private_recording_asks_for_a_session_id() {
         per_conn_rate: 1_000_000,
         first_429: 0,
         private: true,
+        stall: None,
     })
     .await;
     let dir = temp("private");

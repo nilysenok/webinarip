@@ -16,9 +16,11 @@ use webinarip_core::{Error, HARD_CAP, http::Http, timefmt};
 
 #[derive(Copy, Clone, ValueEnum)]
 enum Q {
-    /// 48 kHz stereo
+    /// Speech (default): mono, MP3 64 kbit/s — half the size of stereo, same voice
+    Speech,
+    /// Stereo 48 kHz, MP3 128 kbit/s
     High,
-    /// 16 kHz mono, small — speech and transcription
+    /// 16 kHz mono, lowest bitrate — for transcription
     Low,
 }
 
@@ -50,7 +52,7 @@ struct Cli {
     /// Tracks to mix: host,3,5 (numbers from --list); all by default
     #[arg(long, value_name = "LIST")]
     tracks: Option<String>,
-    #[arg(long, value_enum, default_value = "high")]
+    #[arg(long, value_enum, default_value = "speech")]
     quality: Q,
     /// Opus in Ogg instead of MP3 (smallest files)
     #[arg(long)]
@@ -94,6 +96,7 @@ fn options(cli: &Cli) -> Result<Options, Error> {
         Format::Mp3
     };
     o.quality = match cli.quality {
+        Q::Speech => Quality::Speech,
         Q::High => Quality::High,
         Q::Low => Quality::Low,
     };

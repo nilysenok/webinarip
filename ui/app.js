@@ -2,7 +2,7 @@
 import { $, api, isLink, store } from "./fmt.js";
 import { history, live, probeLine, trackChips } from "./view.js";
 
-const opts = { format: store.get("format", "mp3"), quality: store.get("quality", "high") };
+const opts = { format: store.get("format", "mp3"), quality: store.get("quality", "speech") };
 const picked = new Set();
 let probe = null, probedLink = "", jobId = null, audioFor = null, timer = null, historyKey = "";
 

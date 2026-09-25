@@ -32,6 +32,8 @@ pub struct Progress {
     pub mixed_ms: AtomicU64,
     pub total_ms: AtomicU64,
     ewma_us: AtomicU64,
+    /// Median segment latency, refreshed every few segments (cheap to read often).
+    p50_ms: AtomicU64,
     latencies_ms: Mutex<Vec<u32>>,
     /// (done, total) per track slot.
     slots: Mutex<Vec<(usize, usize)>>,
@@ -91,7 +93,15 @@ impl Progress {
         let us = took.as_micros() as u64;
         let old = self.ewma_us.load(Relaxed);
         self.ewma_us.store(if old == 0 { us } else { (old * 7 + us) / 8 }, Relaxed);
-        self.latencies_ms.lock().unwrap().push(took.as_millis() as u32);
+        {
+            let mut lat = self.latencies_ms.lock().unwrap();
+            lat.push(took.as_millis() as u32);
+            if lat.len() < 64 || lat.len() % 16 == 0 {
+                let mut v = lat.clone();
+                v.sort_unstable();
+                self.p50_ms.store(v[v.len() / 2] as u64, Relaxed);
+            }
+        }
         let mut s = self.samples.lock().unwrap();
         s.push_back((Instant::now(), total));
         while s.front().is_some_and(|(t, _)| t.elapsed() > RATE_WINDOW) {
@@ -121,6 +131,11 @@ impl Progress {
     /// Smoothed segment latency — basis for the hedging delay.
     pub fn typical_latency(&self) -> Duration {
         Duration::from_micros(self.ewma_us.load(Relaxed))
+    }
+
+    /// Median segment latency so far (refreshed every 16 segments); zero before the first.
+    pub fn median_latency(&self) -> Duration {
+        Duration::from_millis(self.p50_ms.load(Relaxed))
     }
 
     /// Latency percentile of downloaded (not cached) segments, seconds.

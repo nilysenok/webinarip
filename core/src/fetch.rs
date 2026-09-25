@@ -172,9 +172,13 @@ impl Ctx {
             return Ok(());
         }
         let (path, len) = (self.items[idx].path.clone(), r.body.len() as u64);
-        tokio::task::spawn_blocking(move || cache::write_atomic(&path, &r.body))
+        let written = tokio::task::spawn_blocking(move || cache::write_atomic(&path, &r.body))
             .await
-            .map_err(|e| Error::Net(e.to_string()))??;
+            .map_err(|e| Error::Net(e.to_string()))?;
+        if written.is_err() && self.state[idx].load(Relaxed) == DONE {
+            return Ok(()); // the other copy got there first
+        }
+        written?;
         if self.state[idx].swap(DONE, Relaxed) != DONE {
             self.prog.downloaded(len, took, self.items[idx].slot);
             self.open.fetch_sub(1, Relaxed);

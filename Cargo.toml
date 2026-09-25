@@ -16,3 +16,8 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The profile that 'dist' will build with
+# Release artifacts use the same settings as the measured binary.
+[profile.dist]
+inherits = "release"

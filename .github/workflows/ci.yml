@@ -31,6 +31,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --release
+      - run: cargo build --release -p webinarip
       - name: Binary size
         shell: bash
-        run: ls -l target/release/webinarip* | head -3
+        run: ls -l target/release/webinarip target/release/webinarip.exe 2>/dev/null || true

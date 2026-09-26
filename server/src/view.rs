@@ -71,12 +71,14 @@ fn job_view(job: &Job) -> JobView {
     };
     let d = dl.as_ref().map(|d| d.prog.clone()).unwrap_or_default();
     let (hist_max, hist) = d.histogram(24);
-    let elapsed = job
-        .took
-        .lock()
-        .unwrap()
-        .or_else(|| job.started.lock().unwrap().map(|t| t.elapsed().as_secs_f64()))
-        .unwrap_or(0.0);
+    // One lock per statement: a guard lives until the end of its statement, and holding two
+    // at once (or the same one twice) is how this view once deadlocked.
+    let took = *job.took.lock().unwrap();
+    let started = *job.started.lock().unwrap();
+    let result = *job.result.lock().unwrap();
+    let streamable = *job.streamable.lock().unwrap();
+    let error = job.error.lock().unwrap().clone();
+    let elapsed = took.or_else(|| started.map(|t| t.elapsed().as_secs_f64())).unwrap_or(0.0);
     let realtime = if elapsed > 0.5 { mixed / elapsed } else { 0.0 };
     let path = job.path.lock().unwrap().clone();
     JobView {
@@ -103,15 +105,15 @@ fn job_view(job: &Job) -> JobView {
         retries: d.retries.load(Relaxed),
         mixer_wait: dl.as_ref().map_or(0.0, |d| d.gate.longest_wait().as_secs_f64()),
         http429: d.http429.load(Relaxed),
-        audio: *job.streamable.lock().unwrap() && mixed >= 2.0 || status == Status::Done,
+        audio: streamable && mixed >= 2.0 || status == Status::Done,
         realtime,
-        out_bytes: job.result.lock().unwrap().map_or_else(
+        out_bytes: result.map_or_else(
             || path.as_ref().and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len()),
             |r| r.1,
         ),
-        files: job.result.lock().unwrap().map_or(1, |r| r.0),
+        files: result.map_or(1, |r| r.0),
         path: path.as_ref().map(|p| p.display().to_string()),
-        error: job.error.lock().unwrap().clone(),
+        error,
         elapsed,
     }
 }
@@ -147,6 +149,27 @@ pub fn state(app: &App) -> StateView {
 mod tests {
     use super::*;
     use webinarip_core::progress::Progress;
+
+    #[test]
+    fn state_does_not_deadlock_with_a_job() {
+        let dir = std::env::temp_dir().join(format!("webinarip-view-{}", std::process::id()));
+        let app = App::new(dir.clone(), dir.clone(), "http://127.0.0.1:9".into());
+        let id = app.enqueue("https://x/record-new/1".into(), Default::default(), None);
+        let job = app.job(id).unwrap();
+        *job.status.lock().unwrap() = Status::Done;
+        *job.result.lock().unwrap() = Some((3, 10));
+        *job.took.lock().unwrap() = Some(1.5);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let a = app.clone();
+        std::thread::spawn(move || {
+            let first = state(&a).job.map(|j| (j.files, j.out_bytes, j.elapsed));
+            let _second = state(&a);
+            tx.send(first).unwrap();
+        });
+        let got = rx.recv_timeout(std::time::Duration::from_secs(2)).expect("state() deadlocked");
+        assert_eq!(got, Some((3, 10, 1.5)));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn percent_follows_segments_then_mixing() {

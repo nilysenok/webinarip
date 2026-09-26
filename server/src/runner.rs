@@ -30,7 +30,8 @@ pub async fn run_queue(app: Arc<App>) {
         *job.status.lock().unwrap() = Status::Running;
         *job.started.lock().unwrap() = Some(Instant::now());
         let res = run_job(&app, &job).await;
-        *job.took.lock().unwrap() = job.started.lock().unwrap().map(|t| t.elapsed().as_secs_f64());
+        let started = *job.started.lock().unwrap();
+        *job.took.lock().unwrap() = started.map(|t| t.elapsed().as_secs_f64());
         let mut status = job.status.lock().unwrap();
         *status = match res {
             Ok(()) => Status::Done,

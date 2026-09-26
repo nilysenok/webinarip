@@ -1,6 +1,6 @@
 # webinarip
 
-Downloads an MTS Link webinar recording as one file: **an 85-minute webinar to MP3 in {{HEADLINE}} s** from an empty cache. Every participant's audio is mixed into one track; participants' videos, their separate tracks and an editing timeline are one flag away. One ~4 MB binary, no dependencies.
+Downloads an MTS Link webinar recording as one file: **an 85-minute webinar to MP3 in 88 s** from an empty cache (at night; in the daytime, when the server is busy, 2–2.5 min). Every participant's audio is mixed into one track; participants' videos, their separate tracks and an editing timeline are one flag away. One ~4 MB binary, no dependencies.
 
 [Русский](README.md)
 
@@ -55,9 +55,19 @@ Times in `--from/--to`: `75` is seconds, `10:00` is minutes and seconds (as in f
 
 ## Benchmark
 
-One recording (85 minutes, 18 participant tracks), one series back to back on {{BENCH_DATE_EN}}, macOS arm64, one network. Each tool starts with an empty cache in its own folder; limit 30 minutes.
+One recording (85 minutes, 18 participant tracks), one series back to back on 26 September 2026, 03:50–05:06 (Moscow time), macOS arm64, one network. Each tool starts with an empty cache in its own folder; limit 30 minutes.
 
-{{BENCH_TABLE_EN}}
+| Tool | Produces | Start, 26.09.2026 | Time | Result |
+|---|---|---|---|---|
+| **webinarip** | MP3 of the mix, mono 64 kbit/s | 03:50 | **1 min 28 s** | done, 41 MB |
+| **webinarip `--both`** | MP3 + 10 participant videos in WebM (frames not re-encoded) | 03:52 | **1 min 40 s** | done, 874 MB |
+| [mtslinker](https://github.com/motattack/mtslinker) | one combined video (rendered with moviepy) | 03:53 | > 30 min | not finished: downloaded 1.2 GB of sources and rendered ~2 % of the video, its own estimate ~8 h |
+| [mtslinkdownloader](https://github.com/uboy/mtslinkdownloader) | one combined video 1920×1080, H.264 + AAC | 04:23 | 28 min 53 s | done, 750 MB |
+| [MTS-Link-audio-downloader](https://github.com/Utahamen/MTS-Link-audio-downloader) | MP3, stereo 192 kbit/s (downloads the full videos) | 05:02¹ | 4 min 12 s | done, 123 MB; 1.1 GB downloaded |
+
+¹ In the series the command from its README (`python -m mtslink_downloader`) did not start — the package has no `__main__`; it was run right after the series via `mtslink_downloader.cli`.
+
+Server speed depends a lot on the time of day: this series ran at night; in the daytime the same recording to MP3 takes webinarip 2–2.5 minutes.
 
 mtslinker and mtslinkdownloader do a different job — they render one combined video with a camera layout and re-encoding, and have no audio-only mode; the table says what each tool produces.
 

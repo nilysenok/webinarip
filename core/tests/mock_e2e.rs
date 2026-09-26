@@ -107,6 +107,35 @@ async fn range_and_track_selection() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// A range that skips a track's first segments: the audio must stay at its own time. Fragments
+/// carry their time (`tfdt`); the decoder once counted from the first segment it read, so a
+/// track that started before `--from` was shifted out of the window — the file came out silent.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_range_past_the_first_segment_keeps_the_audio_in_place() {
+    let mock = common::start(common::Config {
+        per_conn_rate: 1_000_000,
+        first_429: 0,
+        private: false,
+        stall: None,
+    })
+    .await;
+    let dir = temp("range-late");
+    let mut o = options(&mock, &dir, 8);
+    o.from = Some(2.2); // seg0 and seg1 (0–2.0 s) are not downloaded at all
+    o.to = Some(2.9);
+    o.tracks = Some("host".into());
+    o.quality = Quality::Low;
+    let out = job::run(o, Arc::new(Progress::default()), |_| {}).await.unwrap();
+    let pcm: Vec<i16> = hound::WavReader::open(&out.path)
+        .unwrap()
+        .samples::<i16>()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(pcm.len(), 11_200);
+    assert!(rms(&pcm[1_000..10_000]) > 0.03, "silent: {}", rms(&pcm[1_000..10_000])); // 2.2–2.9 s: the host speaks
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn private_recording_asks_for_a_session_id() {
     let mock = common::start(common::Config {

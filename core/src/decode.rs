@@ -1,7 +1,8 @@
 //! Decoding one track: its cached fMP4 pieces (init + segments) are read as one continuous
 //! forward-only stream — `init + fragments` is a valid MP4 — and decoded to 48 kHz stereo f32.
-//! Packet timestamps come from the fragments themselves, so a track can start mid-recording
-//! (for `--from`) and still land at the exact spot on the timeline.
+//! Positions come from the fragments' own time (`tfdt`), so a track read from the middle (for
+//! `--from`) lands at the exact spot on the timeline. symphonia counts from the first fragment
+//! it reads instead: the difference is measured once, on the first packet.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,14 +26,29 @@ pub struct TrackDecoder {
     tb: (u64, u64),
     buf: Vec<f32>,
     out: Vec<f32>,
+    /// Init piece and first fragment, to read the first fragment's own time.
+    first: (PathBuf, PathBuf),
+    /// 48 kHz frames to add to symphonia's positions; known after the first packet.
+    base: Option<i64>,
 }
 
 fn dec_err(e: impl std::fmt::Display) -> Error {
     Error::Decode(e.to_string())
 }
 
+/// The first fragment's own start (`tfdt`, its earliest sample) in 48 kHz frames. By the time
+/// the first packet is decoded, both files are on disk.
+fn first_fragment_frames((init, seg): &(PathBuf, PathBuf)) -> Result<i64> {
+    use crate::video::fmp4;
+    let head = fmp4::parse_init(&std::fs::read(init)?)?;
+    let samples = fmp4::parse_fragment(&head, &std::fs::read(seg)?)?;
+    let pts = samples.iter().map(|s| s.pts).min().unwrap_or(0);
+    Ok(pts * RATE as i64 / head.timescale.max(1) as i64)
+}
+
 impl TrackDecoder {
     pub fn open(paths: Vec<PathBuf>, gate: Arc<Gate>) -> Result<Self> {
+        let first = (paths[0].clone(), paths.get(1).cloned().unwrap_or_else(|| paths[0].clone()));
         let mss = MediaSourceStream::new(Box::new(StreamSource::new(paths, gate)), Default::default());
         let mut hint = Hint::new();
         hint.with_extension("mp4");
@@ -66,6 +82,8 @@ impl TrackDecoder {
             tb,
             buf: Vec::new(),
             out: Vec::new(),
+            first,
+            base: None,
         })
     }
 
@@ -79,6 +97,7 @@ impl TrackDecoder {
                 continue;
             }
             let at = pkt.pts.get() * (self.tb.0 * RATE as u64) as i64 / self.tb.1 as i64;
+            let at = at + *self.base.get_or_insert(first_fragment_frames(&self.first)? - at);
             let decoded = match self.decoder.decode(&pkt) {
                 Ok(d) => d,
                 Err(symphonia::core::errors::Error::DecodeError(_)) => continue, // one bad frame ≠ a dead track

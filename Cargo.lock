@@ -1440,7 +1440,7 @@ dependencies = [
 
 [[package]]
 name = "webinarip"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "clap",
  "indicatif",
@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "webinarip-core"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "bytes",
  "chrono",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "webinarip-server"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "axum",
  "chrono",

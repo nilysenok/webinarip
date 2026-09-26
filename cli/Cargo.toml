@@ -12,5 +12,5 @@ rust-version.workspace = true
 clap = { version = "4.6.7", features = ["derive", "env"] }
 indicatif = "0.18.6"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
-webinarip-core = { version = "0.1.0", path = "../core" }
-webinarip-server = { version = "0.1.0", path = "../server" }
+webinarip-core = { version = "0.1.0-rc.1", path = "../core" }
+webinarip-server = { version = "0.1.0-rc.1", path = "../server" }

@@ -45,17 +45,13 @@ pub async fn fetch_record(http: &Http, opts: &Options) -> Result<Record> {
     record::parse(&id, &json)
 }
 
-/// Videos for the chosen tracks: all of them with `--tracks`, otherwise the longer ones.
+/// Videos for the chosen tracks that have a camera: all of them with `--tracks`, otherwise
+/// the longer ones (the length is checked on the playlist when planning).
 pub fn video_pick(opts: &Options, tracks: &[record::Track]) -> Option<VideoPick> {
-    let explicit = opts.tracks.is_some();
-    let ids = tracks
-        .iter()
-        .filter(|t| explicit || t.duration >= MIN_VIDEO_SECS)
-        .map(|t| t.id)
-        .collect();
-    opts.wants_video().then_some(VideoPick {
-        tracks: ids,
+    opts.wants_video().then(|| VideoPick {
+        tracks: tracks.iter().map(|t| t.id).collect(),
         max_height: opts.video_height,
+        min_secs: if opts.tracks.is_some() { 0.0 } else { MIN_VIDEO_SECS },
     })
 }
 

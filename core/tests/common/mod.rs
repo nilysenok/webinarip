@@ -45,21 +45,34 @@ fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
-fn record_json(base: &str) -> String {
+/// Recording 1: two 3 s tracks with cameras. Recording 3 adds a camera-off track (`t3`: its
+/// "video" rendition is the AAC of `t1`) and gives the guest no length in the JSON, as MTS
+/// Link does for some sessions.
+fn record_json(base: &str, camera_off: bool) -> String {
     let session = |id: u64, conf: u64, at: f64, t: &str| {
         format!(
             r#"{{"module":"mediasession.add","relativeTime":{at},"data":{{"id":{id},"hlsUrl":"{base}/{t}/master.m3u8","stream":{{"conference":{{"id":{conf}}}}}}}}}"#
         )
     };
-    format!(
-        r#"{{"name":"Mock webinar","createAt":"2026-09-22T10:00:00+0300","duration":5.0,"user":{{"id":7}},"eventLogs":[
-        {{"module":"conference.add","data":{{"id":1,"user":{{"id":7,"nickname":"Host"}}}}}},
-        {{"module":"conference.add","data":{{"id":2,"user":{{"id":8,"nickname":"Guest"}}}}}},
-        {},{},
-        {{"module":"mediasession.update","data":{{"id":10,"duration":3.0}}}},
-        {{"module":"mediasession.update","data":{{"id":11,"duration":3.0}}}}]}}"#,
+    let person = |conf: u64, user: u64, nick: &str| {
+        format!(r#"{{"module":"conference.add","data":{{"id":{conf},"user":{{"id":{user},"nickname":"{nick}"}}}}}}"#)
+    };
+    let update = |id: u64| format!(r#"{{"module":"mediasession.update","data":{{"id":{id},"duration":3.0}}}}"#);
+    let mut logs = vec![
+        person(1, 7, "Host"),
+        person(2, 8, "Guest"),
         session(10, 1, 0.0, "t1"),
-        session(11, 2, 2.0, "t2")
+        session(11, 2, 2.0, "t2"),
+        update(10),
+    ];
+    if camera_off {
+        logs.extend([person(3, 9, "No camera"), session(12, 3, 1.0, "t3"), update(12)]);
+    } else {
+        logs.push(update(11));
+    }
+    format!(
+        r#"{{"name":"Mock webinar","createAt":"2026-09-22T10:00:00+0300","duration":5.0,"user":{{"id":7}},"eventLogs":[{}]}}"#,
+        logs.join(",")
     )
 }
 
@@ -82,7 +95,7 @@ async fn handle(
         return if cfg.private {
             reply(403, vec![])
         } else {
-            reply(200, record_json(&base).into_bytes())
+            reply(200, record_json(&base, path.starts_with("/api/eventsessions/3/")).into_bytes())
         };
     }
     if path.ends_with(".m4s") {

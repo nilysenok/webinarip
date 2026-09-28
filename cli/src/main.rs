@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use args::{Cli, options};
 use clap::Parser;
+use webinarip_core::deliver::Made;
 use webinarip_core::job::{self, Options};
 use webinarip_core::progress::Progress;
 use webinarip_core::{Error, http::Http, timefmt};
@@ -39,6 +40,7 @@ async fn run(cli: Cli) -> Result<(), Error> {
     if cli.list {
         return list(&opts).await;
     }
+    let wants_video = opts.wants_video();
     let (prog, download) = (Arc::new(Progress::default()), Arc::new(std::sync::OnceLock::new()));
     let t0 = Instant::now();
     let drawer = tokio::spawn(bars::draw(prog.clone(), download.clone()));
@@ -49,6 +51,9 @@ async fn run(cli: Cli) -> Result<(), Error> {
     drawer.abort();
     let out = result?;
     bars::summary(&out, t0.elapsed());
+    if wants_video && !out.pieces.iter().any(|p| matches!(p.kind, Made::Video { .. })) {
+        eprintln!("note: no videos — the chosen tracks have no camera (or, without --tracks, run under 30 s)");
+    }
     Ok(())
 }
 

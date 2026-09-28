@@ -31,7 +31,11 @@ pub type AudioFor<'a> = &'a dyn Fn(f64, f64) -> Vec<(i64, Vec<u8>)>;
 /// Two passes over the segment files — timestamps first, then frames — so memory holds one
 /// segment at a time, not the whole video.
 pub fn remux(files: &[PathBuf], out: &Path, window: (f64, f64), audio: Option<(&Audio, AudioFor)>) -> Result<Remuxed> {
-    let init = fmp4::parse_init(&std::fs::read(&files[0])?)?;
+    let init = std::fs::read(&files[0])?;
+    if !fmp4::is_video(&init) {
+        return Err(crate::Error::Parse(format!("{}: no video track", files[0].display())));
+    }
+    let init = fmp4::parse_init(&init)?;
     let scale = init.timescale as f64;
     let (lo, hi) = ((window.0 * scale) as i64, (window.1 * scale) as i64);
     // Pass 1: which frames to keep — from the first key frame at or after `lo`, before `hi`.

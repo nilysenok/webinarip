@@ -35,6 +35,14 @@ impl Sample {
     }
 }
 
+/// Whether the init piece holds a video track (`hdlr` = `vide`). MTS Link labels camera-off
+/// sessions 640x480 in the master playlist, yet behind the label there is only AAC.
+pub fn is_video(init: &[u8]) -> bool {
+    let hdlr = find(init, 0, init.len(), &[b"moov", b"trak", b"mdia", b"hdlr"]);
+    // Full box: version and flags, pre-defined, then the handler type.
+    matches!(hdlr, Ok(Some((s, _))) if init.get(s + 8..s + 12) == Some(b"vide".as_slice()))
+}
+
 pub fn parse_init(buf: &[u8]) -> Result<Init> {
     let mut init = Init::default();
     let (s, e) = find(buf, 0, buf.len(), &[b"moov", b"trak", b"mdia", b"mdhd"])?.ok_or_else(|| bad("no mdhd"))?;
@@ -153,4 +161,18 @@ fn trun(buf: &[u8], b: usize, (base, dur, size, flags): (u64, u32, u32, u32), t:
         *t += d as i64;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn video_is_told_by_the_handler_not_the_playlist() {
+        let video = include_bytes!("../../tests/fixtures/t1/v/init.mp4");
+        let audio = include_bytes!("../../tests/fixtures/t1/a/init.mp4");
+        assert!(is_video(video));
+        assert!(!is_video(audio), "AAC behind a 640x480 label is not a camera");
+        assert!(!is_video(b"not an mp4"));
+    }
 }

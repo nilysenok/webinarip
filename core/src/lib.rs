@@ -4,6 +4,7 @@
 //! Use it only for recordings you have the rights to.
 
 pub mod cache;
+mod camera;
 pub mod decode;
 pub mod deliver;
 pub mod dsp;

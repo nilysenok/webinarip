@@ -2,9 +2,10 @@
 //! init piece and segments, each with its place on the shared recording timeline, so a plan
 //! can be cut to any `[from, to)`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::camera::has_video;
 use crate::hls::{self, Media};
 use crate::http::Http;
 use crate::record::{Record, Track};
@@ -36,11 +37,13 @@ pub struct Planned {
     pub pieces: Vec<Piece>,
 }
 
-/// Which tracks get video, and the highest frame height wanted (`None` = best).
+/// Which tracks get video, the highest frame height wanted (`None` = best) and the shortest
+/// video worth keeping, measured on its playlist.
 #[derive(Debug, Clone, Default)]
 pub struct VideoPick {
     pub tracks: Vec<u64>,
     pub max_height: Option<u32>,
+    pub min_secs: f64,
 }
 
 impl Planned {
@@ -87,7 +90,13 @@ fn pieces(track: &Track, media: &Media, dir: &std::path::Path) -> Vec<Piece> {
     out
 }
 
-async fn plan_track(http: Arc<Http>, root: PathBuf, rec_id: String, track: Track, video: Option<Option<u32>>) -> Result<Vec<Planned>> {
+async fn plan_track(
+    http: Arc<Http>,
+    root: PathBuf,
+    rec_id: String,
+    track: Track,
+    video: Option<(Option<u32>, f64)>,
+) -> Result<Vec<Planned>> {
     let Some(master_url) = track.hls.clone() else { return Ok(vec![]) };
     let master = hls::parse_master(&master_url, &String::from_utf8_lossy(&http.get_ok(&master_url).await?))?;
     let mut out = Vec::new();
@@ -101,35 +110,31 @@ async fn plan_track(http: Arc<Http>, root: PathBuf, rec_id: String, track: Track
             pieces,
         });
     }
-    if let Some(v) = video.and_then(|h| hls::pick(&master.variants, h)) {
-        let media = hls::parse_media(&v.url, &String::from_utf8_lossy(&http.get_ok(&v.url).await?))?;
-        let pieces = pieces(
-            &track,
-            &media,
-            &cache::track_dir(&root, &rec_id, track.id, &format!("v{}", v.height)),
-        );
+    let Some((v, min_secs)) = video.and_then(|(h, min)| Some((hls::pick(&master.variants, h)?, min))) else {
+        return Ok(out);
+    };
+    let media = hls::parse_media(&v.url, &String::from_utf8_lossy(&http.get_ok(&v.url).await?))?;
+    let dir = cache::track_dir(&root, &rec_id, track.id, &format!("v{}", v.height));
+    // The length comes from the playlist: the recording's JSON has none for some sessions.
+    let long = media.segments.iter().map(|s| s.duration).sum::<f64>() >= min_secs;
+    if long && has_video(&http, &media, &dir).await? {
         out.push(Planned {
-            track,
             kind: Kind::Video(v.height),
             slot: 0,
-            pieces,
+            pieces: pieces(&track, &media, &dir),
+            track,
         });
     }
     Ok(out)
 }
 
 /// Plans the audio of `tracks` and the video of those in `video`. Tracks without the
-/// rendition are skipped. Slots are numbered in (track, kind) order.
-pub async fn plan(
-    http: &Arc<Http>,
-    cache_dir: &std::path::Path,
-    rec: &Record,
-    tracks: Vec<Track>,
-    video: Option<&VideoPick>,
-) -> Result<Vec<Planned>> {
+/// rendition, without a camera or with a shorter video are skipped. Slots are numbered in
+/// (track, kind) order.
+pub async fn plan(http: &Arc<Http>, cache_dir: &Path, rec: &Record, tracks: Vec<Track>, video: Option<&VideoPick>) -> Result<Vec<Planned>> {
     let mut set = tokio::task::JoinSet::new();
     for t in tracks {
-        let v = video.filter(|v| v.tracks.contains(&t.id)).map(|v| v.max_height);
+        let v = video.filter(|v| v.tracks.contains(&t.id)).map(|v| (v.max_height, v.min_secs));
         set.spawn(plan_track(http.clone(), cache_dir.to_path_buf(), rec.id.clone(), t, v));
     }
     let mut planned = Vec::new();
